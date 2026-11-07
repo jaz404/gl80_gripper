@@ -4,24 +4,31 @@ import serial
 import time
 import struct
 
-
-
-
 SERIAL_PORT = "/dev/ttyACM0"
 BAUD_RATE = 115200
 
 RAW_MIN = 0
 RAW_MAX = 10000
 
-POS_MIN = -0.02
-POS_MAX = 0.18
+# POS_MIN = -0.02
+# POS_MAX = 0.194
+
+POS_MIN = 0.03
+POS_MAX = 0.195
 
 # SERIAL_TIMEOUT = 0.1      # stop motor if no valid packet for 100 ms
 # CONTROL_PERIOD = 0.002    # 500 Hz
 # CONTROL_PERIOD = 0.1   # 200 Hz
 
-CONTROL_PERIOD = 0.01   # 100 Hz
+# CONTROL_PERIOD = 0.01   # 100 Hz
+CONTROL_PERIOD = 0.0001 
 SERIAL_TIMEOUT = 0.1
+
+# need to figure out this before
+# TORQUE_BASELINE = 0.00
+
+FREE_TORQUE_MIN = -0.045
+FREE_TORQUE_MAX =  0.125
 
 def clamp(value, minimum, maximum):
     return max(minimum, min(maximum, value))
@@ -78,10 +85,11 @@ async def main():
                 latest_position = map_position(raw)
                 last_packet_time = time.monotonic()
 
-                print(
-                    f"raw={raw:5d}  "
-                    f"position={latest_position:+.4f}"
-                )
+                # print(
+                #     f"raw={raw:5d}  "
+                #     f"position={latest_position:+.4f}"
+                #     f""
+                # )
 
             # Only command motor if serial data is fresh
             if (
@@ -91,7 +99,7 @@ async def main():
                 result = await c.set_position(
                     position=latest_position,
                     velocity=0,
-                    maximum_torque=0.3,
+                    maximum_torque=3.0, # 10.0 worked fine but be careful
                     velocity_limit=12.0,
                     accel_limit=15.0,
                     # maximum_torque=0.1,
@@ -105,14 +113,26 @@ async def main():
 
                 position_error = latest_position - measured_position
 
+                # external_torque = measured_torque - TORQUE_BASELINE
+                if FREE_TORQUE_MIN <= measured_torque <= FREE_TORQUE_MAX:
+                    external_torque = 0.0
+                elif measured_torque > FREE_TORQUE_MAX:
+                    external_torque = measured_torque - FREE_TORQUE_MAX
+                else:
+                    external_torque = measured_torque - FREE_TORQUE_MIN
                 feedback_packet = struct.pack(
                     "<cff",
                     b"G",
                     position_error,
-                    measured_torque,
+                    external_torque,
                 )
 
                 ser.write(feedback_packet)
+
+                print(
+                #     f"raw={raw:5d}  "
+                    f"position error={position_error:+.4f}")
+                    #  f"external torque={external_torque:+.4f}")
 
             await asyncio.sleep(CONTROL_PERIOD)
 
